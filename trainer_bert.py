@@ -19,8 +19,10 @@ from utils.focalloss import FocalLoss
 from utils.tweet_processor import processing_pipeline
 from copy import deepcopy
 
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
 parser = argparse.ArgumentParser(description='Options')
-parser.add_argument('-folds', default=9, type=int,
+parser.add_argument('-folds', default=3, type=int,
                     help="num of folds")
 parser.add_argument('-bs', default=128, type=int,
                     help="batch size")
@@ -46,6 +48,12 @@ parser.add_argument('-loss', default='ce', type=str,
                     help="ce or focal ")
 parser.add_argument('-tokentype', default='True', type=str,
                     help="post name")
+parser.add_argument('-half', default='False', type=str,
+                    help="Half precision")
+parser.add_argument('-size', default='base', type=str,
+                    help="size")
+parser.add_argument('-padlen', default=3, type=int,
+                    help="padlen 3")
 opt = parser.parse_args()
 
 if opt.half == 'True':
@@ -351,7 +359,8 @@ def main():
             if HALF_PRECISION:
                 # model = network_to_half(model)
                 model.half()
-            model.cuda()
+            model.to(device)
+            #model.cpu()
 
             # BERT optimizer
             param_optimizer = list(model.named_parameters())
@@ -375,10 +384,10 @@ def main():
                 weight_list_binary = [2 - weight_list[-1], weight_list[-1]]
 
             weight_list = [x**FLAT for x in weight_list]
-            weight_label = torch.Tensor(weight_list).cuda()
+            weight_label = torch.Tensor(weight_list).to(device)
 
             weight_list_binary = [x**FLAT for x in weight_list_binary]
-            weight_binary = torch.Tensor(weight_list_binary).cuda()
+            weight_binary = torch.Tensor(weight_list_binary).to(device)
             print('binary loss reweight = weight_list_binary', weight_list_binary)
             # loss_criterion_binary = nn.CrossEntropyLoss(weight=weight_list_binary)  #
             if opt.loss == 'focal':
@@ -405,19 +414,19 @@ def main():
                     optimizer.zero_grad()
 
                     if USE_TOKEN_TYPE:
-                        pred, pred2, pred3 = model(tokens.cuda(), masks.cuda(), segments.cuda())
+                        pred, pred2, pred3 = model(tokens.to(device), masks.to(device), segments.to(device))
                     else:
-                        pred, pred2, pred3 = model(tokens.cuda(), masks.cuda())
+                        pred, pred2, pred3 = model(tokens.to(device), masks.to(device))
 
-                    loss_label = loss_criterion(pred, e_c.view(-1).cuda()).cuda()
-                    loss_label = torch.matmul(torch.gather(weight_label, 0, e_c.view(-1).cuda()), loss_label) / \
+                    loss_label = loss_criterion(pred, e_c.view(-1).to(device)).to(device)
+                    loss_label = torch.matmul(torch.gather(weight_label, 0, e_c.view(-1).to(device)), loss_label) / \
                                  e_c.view(-1).shape[0]
 
-                    loss_binary = loss_criterion_binary(pred2, e_c_binary.view(-1).cuda()).cuda()
-                    loss_binary = torch.matmul(torch.gather(weight_binary, 0, e_c_binary.view(-1).cuda()),
+                    loss_binary = loss_criterion_binary(pred2, e_c_binary.view(-1).to(device)).to(device)
+                    loss_binary = torch.matmul(torch.gather(weight_binary, 0, e_c_binary.view(-1).to(device)),
                                                loss_binary) / e_c.view(-1).shape[0]
 
-                    loss_emo = loss_criterion_emo_only(pred3, e_c_emo.cuda())
+                    loss_emo = loss_criterion_emo_only(pred3, e_c_emo.to(device))
 
                     loss = (loss_label + LAMBDA1 * loss_binary + LAMBDA2 * loss_emo) / float(1 + LAMBDA1 + LAMBDA2)
 
@@ -438,19 +447,19 @@ def main():
                 for i, (tokens, masks, segments, e_c, e_c_binary, e_c_emo) in enumerate(dev_data_loader):
                     with torch.no_grad():
                         if USE_TOKEN_TYPE:
-                            pred, pred2, pred3 = model(tokens.cuda(), masks.cuda(), segments.cuda())
+                            pred, pred2, pred3 = model(tokens.to(device), masks.to(device), segments.to(device))
                         else:
-                            pred, pred2, pred3 = model(tokens.cuda(), masks.cuda())
+                            pred, pred2, pred3 = model(tokens.to(device), masks.to(device))
 
-                        loss_label = loss_criterion(pred, e_c.view(-1).cuda()).cuda()
-                        loss_label = torch.matmul(torch.gather(weight_label, 0, e_c.view(-1).cuda()), loss_label) / \
+                        loss_label = loss_criterion(pred, e_c.view(-1).to(device)).to(device)
+                        loss_label = torch.matmul(torch.gather(weight_label, 0, e_c.view(-1).to(device)), loss_label) / \
                                      e_c.view(-1).shape[0]
 
-                        loss_binary = loss_criterion_binary(pred2, e_c_binary.view(-1).cuda()).cuda()
-                        loss_binary = torch.matmul(torch.gather(weight_binary, 0, e_c_binary.view(-1).cuda()),
+                        loss_binary = loss_criterion_binary(pred2, e_c_binary.view(-1).to(device)).to(device)
+                        loss_binary = torch.matmul(torch.gather(weight_binary, 0, e_c_binary.view(-1).to(device)),
                                                    loss_binary) / e_c.view(-1).shape[0]
 
-                        loss_emo = loss_criterion_emo_only(pred3, e_c_emo.cuda())
+                        loss_emo = loss_criterion_emo_only(pred3, e_c_emo.to(device))
 
                         loss = (loss_label + LAMBDA1 * loss_binary + LAMBDA2 * loss_emo) / float(1 + LAMBDA1 + LAMBDA2)
 
@@ -501,9 +510,9 @@ def main():
                 for i, (tokens, masks, segments, e_c, e_c_binary, e_c_emo) in enumerate(gold_dev_data_loader):
                     with torch.no_grad():
                         if USE_TOKEN_TYPE:
-                            pred, _, _ = model(tokens.cuda(), masks.cuda(), segments.cuda())
+                            pred, _, _ = model(tokens.to(device), masks.to(device), segments.to(device))
                         else:
-                            pred, _, _ = model(tokens.cuda(), masks.cuda())
+                            pred, _, _ = model(tokens.to(device), masks.to(device))
                         pred_list_test.append(pred.data.cpu().numpy())
 
                 pred_list_test = np.argmax(np.concatenate(pred_list_test, axis=0), axis=1)
@@ -515,9 +524,9 @@ def main():
                 for i, (tokens, masks, segments, e_c, e_c_binary, e_c_emo) in enumerate(gold_test_data_loader):
                     with torch.no_grad():
                         if USE_TOKEN_TYPE:
-                            pred, _, _ = model(tokens.cuda(), masks.cuda(), segments.cuda())
+                            pred, _, _ = model(tokens.to(device), masks.to(device), segments.to(device))
                         else:
-                            pred, _, _ = model(tokens.cuda(), masks.cuda())
+                            pred, _, _ = model(tokens.to(device), masks.to(device))
                         final_pred_list_test.append(pred.data.cpu().numpy())
 
                 final_pred_list_test = np.argmax(np.concatenate(final_pred_list_test, axis=0), axis=1)
